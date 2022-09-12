@@ -7,7 +7,14 @@ from pygame.locals import *
 from Primitives import *
 from RGB import RGB
 from Material import Material
-from Ray import Ray
+import taichi as ti
+from Vector import *
+
+ti.init(arch=ti.gpu)
+vec3_type = ti.types.vector(3, ti.f32)
+ray_type = ti.types.struct(origin=ti.types.vector(3, ti.f32), dest=ti.types.vector(3, ti.f32))
+material_type = ti.types.struct(color=ti.types.vector(3, ti.f32), opacity=ti.f32, reflect=ti.f32, luma=ti.f32)
+
 
 background_color = RGB(0, 0, 0)
 xres = 640
@@ -16,61 +23,33 @@ psize = 1
 recurse_limit = 20
 Viewportz = 100
 
+@ti.func
+def distance(one: ti.types.vector(3, ti.f32), two: ti.types.vector(3, ti.f32)) -> float:
+    return math.sqrt((one[0] - two[0]) ** 2 + (one[1] - two[1]) ** 2 + (one[2] - two[2]) ** 2)
 
-def can_see(point, target):
-    cast_ray = Ray()
-    cast_ray.origin = point
-    cast_ray.dest = Vector3D(-260, -100, 0)
-    cast_ray.dest = cast_ray.dest.normalize()
-    hit_distance = False
-    closest_object = False
-    for thing in World:
-        intersection = thing.hit(cast_ray)
-        if intersection:
-            t_hit_distance = cast_ray.origin.distance(intersection.hit_point)
-            if t_hit_distance < hit_distance:
-                hit_distance = t_hit_distance
-                closest_object = intersection
-    if not hit_distance:
-        return False
-    else:
-        if closest_object == target:
-            return True
-        else:
-            return False
-
-
-def lighting(hit):
+@ti.func
+def lighting(hit) -> ti.types.vector(3, ti.f32):
     # How much light things get from cosine shading.
-    diffuse_coefficient = 1
-    shade = Vector3D(0, 0, 1) * hit.normal
-    if shade < 0:
-        shade = 0
+    diffuse_coefficient = 1.
+    shade = vec_mult_vec(vec3_type((0, 0, 1)), hit.normal)
+    if shade < 0.:
+        shade = 0.
 
     point_color = hit.object.material.color * (diffuse_coefficient * shade)
     if hit.object.material.luma > 0:
-        return hit.object.material.color
-    return point_color
-
-
-def lighting2(intersection):
-    if can_see(intersection.hit_point, World[3]):
-        print("CAN SEE!")
-        point_color = intersection.object.material.color
-        return point_color
+        retval = hit.object.material.color
     else:
-        return RGB(0, 0, 0)
+        retval = point_color
+    return retval
 
-
-def raytrace(cast_ray, r=recurse_limit) -> RGB:
-    hit_distance = False
-    hit = False
+@ti.func
+def raytrace(cast_ray: ray_type, r: ti.uint8 = recurse_limit) -> ti.types.vector(3, ti.f32):
+    hit_distance = 0.
+    hit = 0.
     for thing in World:
-        intersection = thing.hit(cast_ray)
-        if intersection:
-            # return intersection.object.material.color  # For debugging
-            t_hit_distance = cast_ray.origin.distance(intersection.hit_point)
-            if t_hit_distance < hit_distance or not hit_distance:
+        if intersection := thing.hit(cast_ray):
+            t_hit_distance = distance(cast_ray.origin, intersection.hit_point)
+            if t_hit_distance < hit_distance or hit_distance == 0.:
                 hit_distance = t_hit_distance
                 hit = intersection
     if not hit_distance:
@@ -83,10 +62,7 @@ def raytrace(cast_ray, r=recurse_limit) -> RGB:
 
     # Check for Reflectance
     if hit.object.material.reflect > 0:
-        reflect_ray = Ray()
-        reflect_ray.origin = hit.hit_point
-        reflect_ray.dest = cast_ray.dest + (2 * hit.normal * (0 - (hit.normal * cast_ray.dest)))
-        reflect_ray.dest = reflect_ray.dest.normalize()
+        reflect_ray = ray_type(origin=hit.hit_point, dest=vec_normalize(cast_ray.dest + (2 * hit.normal * (0 - (hit.normal * cast_ray.dest)))))
         reflect_color = raytrace(reflect_ray, r - 1)
         return lighting(hit) + (reflect_color * hit.object.material.reflect)
     else:
@@ -94,35 +70,32 @@ def raytrace(cast_ray, r=recurse_limit) -> RGB:
         return lighting(hit)
 
 
-def render():
+@ti.kernel
+def render() -> ti.field(dtype=int, shape=(xres, yres)):
+    pixels = ti.field(dtype=int, shape=(xres, yres))
+    ray = ray_type(dest=vec3_type((0, 0, -1)), origin=vec3_type((0, 0, 0)))
+    #  Hardcoded Viewport for now
+    ray.origin[2] = Viewportz
+
+    for x, y in pixels:
+        ray.origin[1] = psize * (y - 0.5 * (yres - 1))
+        ray.origin[0] = psize * (x - 0.5 * (xres - 1))
+        pixels[x, y] = raytrace(ray).finalcolor()
+    return pixels
+
+
+def main():
     pygame.init()
     window_surface_obj = pygame.display.set_mode((xres, yres))
-    pixels = pygame.PixelArray(window_surface_obj)
-    pygame.display.set_caption("PyTrace - Render in Progress...")
-    pygame.event.set_allowed(pygame.QUIT)
-    ray = Ray()
-    ray.dest = Vector3D(0, 0, -1)
-    #  Hardcoded Viewport for now
-    ray.origin.z = Viewportz
+    display = pygame.PixelArray(window_surface_obj)
     starttime = time.time()
-
-    for y in range(yres):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                filename = datetime.datetime.strftime(datetime.datetime.now(), "%H.%M.%S_%d-%b-%Y") + '.png'
-                pygame.image.save(window_surface_obj, filename)
-                pygame.quit()
-                sys.exit()
-
-        ray.origin.y = psize * (y - 0.5 * (yres - 1))
-        for x in range(xres):
-            ray.origin.x = psize * (x - 0.5 * (xres - 1))
-            pixels[x, y] = raytrace(ray).finalcolor()
-        pygame.display.update()
-
-    del pixels
+    pygame.display.set_caption("PyTrace - Render in Progress...")
+    render(display)
     pygame.display.set_caption(f"PyTrace Render Finished - Total time: {time.time() - starttime} seconds")
-    print('Time :', time.time() - starttime)
+    print(f'Time : {time.time() - starttime}')
+
+    pygame.event.set_allowed(pygame.QUIT)
+
     filename = datetime.datetime.strftime(datetime.datetime.now(), "%H.%M.%S_%d-%b-%Y") + '.png'
     pygame.image.save(window_surface_obj, filename)
     pygame.event.set_allowed((pygame.QUIT, pygame.KEYDOWN))
@@ -176,4 +149,4 @@ World.append(Sphere(Point3D(1, 50, 1), 95, Material(RGB(0, 0, .5), 1.0, 0.7, 0.0
 # add a light
 # World.append(Sphere(Point3D(0, 0, 0), 30, Material(RGB(255, 255, 255), 1.0, 1.0, 1.0)))
 
-render()
+main()

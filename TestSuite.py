@@ -3,7 +3,6 @@ from Point import Point3D
 from Vector import Vector3D
 from Normal import Normal
 from Primitives import *
-from Ray import Ray
 import math
 
 

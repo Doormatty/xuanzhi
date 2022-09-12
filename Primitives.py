@@ -21,13 +21,16 @@ class Plane:
     def hit(self, ray):
         t2 = ray.dest * self.normal
         if t2 == 0:  # Ray is parallel to plane
-            return False
-        t = (self.center - ray.origin) * self.normal / t2
-        if t > 0:
-            intersection_point = ray.origin + (t * ray.dest)
-            return RayIntersection(self, self.normal, intersection_point)
-            # return(self, self.normal, intersection_point)
-        return False
+            retval = False
+        else:
+            t = (self.center - ray.origin) * self.normal / t2
+            if t > 0:
+                intersection_point = ray.origin + (t * ray.dest)
+                retval = RayIntersection(self, self.normal, intersection_point)
+                # return(self, self.normal, intersection_point)
+            else:
+                retval = False
+        return retval
 
     def __repr__(self):
         return f"Plane(x={self.center.x}, y={self.center.y}, z={self.center.z})"
@@ -51,18 +54,21 @@ class Sphere:
         c = t_vec * t_vec - (self.radius * self.radius)
         disc = b * b - 4.0 * a * c
         if disc < 0.0:
-            return False
+            retval = False
+        else:
+            e = math.sqrt(disc)
+            t = ((0 - b) - e) / (2.0 * a)
 
-        e = math.sqrt(disc)
-        t = ((0 - b) - e) / (2.0 * a)
+            if t > self.kEpsilon:
+                intersection_point = ray.origin + t * ray.dest
+                normal = Vector3D((intersection_point.x - self.center.x) / self.radius,
+                                  (intersection_point.y - self.center.y) / self.radius,
+                                  (intersection_point.z - self.center.z) / self.radius)
+                retval = RayIntersection(self, normal, intersection_point)
+            else:
+                retval = False
+        return retval
 
-        if t > self.kEpsilon:
-            intersection_point = ray.origin + t * ray.dest
-            normal = Vector3D((intersection_point.x - self.center.x) / self.radius,
-                              (intersection_point.y - self.center.y) / self.radius,
-                              (intersection_point.z - self.center.z) / self.radius)
-            return RayIntersection(self, normal, intersection_point)
-        return False
 
     def __repr__(self):
         return f"Sphere(x={self.center.x}, y={self.center.y}, z={self.center.z}, radius={self.radius})"
